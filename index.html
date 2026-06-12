@@ -204,6 +204,21 @@
       </div>
     </div>
 
+    <div class="card">
+      <h2>⏩ Time Warp</h2>
+      <div class="controls" id="warpBtns">
+        <button class="modebtn warp active" data-s="1">1×</button>
+        <button class="modebtn warp" data-s="2">2×</button>
+        <button class="modebtn warp" data-s="5">5×</button>
+        <button class="modebtn warp" data-s="10">10×</button>
+        <button class="modebtn warp" data-s="25">25×</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin:9px 0 0;line-height:1.5">
+        Worms and nutrient lumps accrue this many times faster. Production <b>keeps running by real time</b>
+        even while this tab is hidden, in the background, or fully closed — you'll catch up the moment you return.
+      </p>
+    </div>
+
     <div class="card evo">
       <h2>Evolution &nbsp;·&nbsp; Prestige</h2>
       <div class="grid2">
@@ -496,11 +511,13 @@ function load(){
   let d; try{ d=JSON.parse(raw); }catch(e){ return; }
   applyLoaded(d);
   if(fromOld){ flash('Imported your v1 save — progress kept!'); save(); }
-  // offline production (half rate, capped 8h)
+  // offline production: keeps running by real time at FULL rate while closed (capped 7 days)
   if(d.t){
-    const secs=Math.min((Date.now()-d.t)/1000, 8*3600);
-    const off=liveCps()*secs*0.5;
-    if(off>10){ S.worms+=off; S.allTime+=off; setTimeout(()=>flash('Welcome back! +'+fmt(off)+' worms while away.'),500); }
+    const secs=Math.min((Date.now()-d.t)/1000, 7*24*3600);
+    const off=liveCps()*secs;
+    if(off>10){ S.worms+=off; S.allTime+=off;
+      const away = secs<3600 ? Math.round(secs/60)+' min' : (secs/3600).toFixed(1)+' h';
+      setTimeout(()=>flash(`Welcome back! +${fmt(off)} worms earned over ${away} away.`),500); }
   }
 }
 function save(){ try{ localStorage.setItem(SAVE_KEY, JSON.stringify(serialize())); flash('Saved.'); }catch(e){ flash('Save failed.'); } }
@@ -703,32 +720,19 @@ function spawnGolden(){
   const life=setTimeout(()=>{ g.style.display='none'; }, 9000);
   g.onclick=()=>{
     clearTimeout(life); g.style.display='none'; S.goldenClicks++;
+    // Every golden worm grants a PRODUCTION-boost buff (no Lucky/Click-Frenzy/Clot).
     const roll=Math.random();
-    if(roll<0.35){
-      // Cookie Clicker "Lucky": min(15% of bank, 15 minutes of CpS) + 13
-      const reward=Math.min(S.worms*0.15, liveCps()*900)+13;
-      S.worms+=reward; S.allTime+=reward; flash('🍀 Lucky! +'+fmt(reward)+' worms');
-    }else if(roll<0.62){
-      // CC Frenzy: x7 for 77s
+    if(roll<0.62){
       buffs.push({name:'Wriggle Frenzy ×7', kind:'cps', mult:7, until:Date.now()+buffDur(77000)});
       flash('🔥 Wriggle Frenzy! ×7 production for 77s');
-    }else if(roll<0.80){
-      // CC Click Frenzy: x777 for 13s
-      buffs.push({name:'Click Frenzy ×777', kind:'click', mult:777, until:Date.now()+buffDur(13000)});
-      flash('🖱️ Click Frenzy! ×777 click power for 13s');
     }else if(roll<0.90){
-      // CC Cookie Storm: short x7 + a flurry of rapidly-spawning golden worms (7s)
-      buffs.push({name:'Worm Storm ×7', kind:'cps', mult:7, until:Date.now()+buffDur(7000)});
-      stormEnd=Date.now()+buffDur(7000);
-      flash('🌪️ Worm Storm! Click the flurry, fast!');
-    }else if(roll<0.97){
-      // CC Dragon Harvest: x15 for 60s
       buffs.push({name:'Wriggle Bloom ×15', kind:'cps', mult:15, until:Date.now()+buffDur(60000)});
       flash('🌟 Wriggle Bloom! ×15 production for 60s');
     }else{
-      // CC Clot: rare penalty, x0.5 production for 66s
-      buffs.push({name:'Clot ×0.5', kind:'cps', mult:0.5, penalty:true, until:Date.now()+66000});
-      flash('🩸 Clot! Production halved for 66s — unlucky!');
+      // Worm Storm: ×7 plus a flurry of rapidly-spawning golden worms — each also a production boost
+      buffs.push({name:'Worm Storm ×7', kind:'cps', mult:7, until:Date.now()+buffDur(7000)});
+      stormEnd=Date.now()+buffDur(7000);
+      flash('🌪️ Worm Storm! Click the flurry, fast!');
     }
     render();
   };
@@ -893,30 +897,50 @@ function render(){
   document.title=fmtInt(S.worms)+' worms — Wriggle Clicker';
 }
 
-/* ---------- main loop ---------- */
-let last=performance.now(), autoVisualAcc=0;
-function loop(now){
-  const dt=Math.min((now-last)/1000, 0.25); last=now;
-  const gain=liveCps()*dt; S.worms+=gain; S.allTime+=gain;
+/* ---------- time, game speed & main loop ---------- */
+let lastReal=Date.now(), lastFrame=performance.now(), autoVisualAcc=0, gameSpeed=1;
+/* Credit production (and advance the nutrient-lump clock) by REAL elapsed time × speed.
+   Driven from rAF, a 1s timer, AND visibility/focus events — so it keeps running while the
+   tab is backgrounded or throttled, and instantly catches up the moment you return. */
+function accrue(){
+  const now=Date.now();
+  const realSec=(now-lastReal)/1000; lastReal=now;
+  if(realSec<=0) return;
+  const warpSec=realSec*gameSpeed;
+  const gain=liveCps()*warpSec; S.worms+=gain; S.allTime+=gain;
+  if(S.lumpStart) S.lumpStart-=(warpSec-realSec)*1000;   // warp the nutrient-lump clock to match
   tickLumps();
-  // cosmetic auto-click pulses
+}
+function setSpeed(s){
+  accrue();                                              // bank the prior elapsed at the OLD rate first
+  gameSpeed=s;
+  document.querySelectorAll('#warpBtns .warp').forEach(b=>b.classList.toggle('active', +b.dataset.s===s));
+  flash('⏩ Time warp ×'+s);
+}
+function loop(now){
+  const fdt=Math.min((now-lastFrame)/1000, 0.25); lastFrame=now;
+  accrue();
+  // cosmetic auto-click pulses (paced to warped time)
   const aps=autoClicksPerSec();
   if(aps>0){
-    autoVisualAcc+=aps*dt;
+    autoVisualAcc+=aps*fdt*gameSpeed;
     if(autoVisualAcc>=1){ autoVisualAcc=0;
       const d=$('#dish'); d.classList.remove('autopulse'); void d.offsetWidth; d.classList.add('autopulse');
       const r=$('#dishWrap').getBoundingClientRect();
       floatText('+'+fmt(clickPowerBase()*globalMult()), r.left+rand(60,200), r.top+rand(60,200), 'auto');
     }
   }
-  goldenTimer+=dt;
+  goldenTimer+=fdt*gameSpeed;
   const freq=S.prestige.ups.has('lucky')?0.74:1;
   const stormOn=Date.now()<stormEnd;                 // Worm Storm: rapid spawns
   const interval=stormOn?0.6:goldenNext*freq;
   if(goldenTimer>=interval){ goldenTimer=0; if(!stormOn) goldenNext=rand(70,140); spawnGolden(); }
   requestAnimationFrame(loop);
 }
+setInterval(accrue, 1000);           // keeps accruing when the tab is backgrounded (throttled, but Date.now-based)
 setInterval(render, 200);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) accrue(); });
+window.addEventListener('focus', accrue);
 
 /* ---------- wiring ---------- */
 buildStore(); buildAchs(); buildEvoUps(); buildTicker();
@@ -939,6 +963,7 @@ document.querySelectorAll('#buyBar .modebtn[data-m]').forEach(btn=>{
   btn.addEventListener('click',()=>{ S.buyMode=btn.dataset.m; S.sellMode=false; render(); });
 });
 $('#sellToggle').addEventListener('click',()=>{ S.sellMode=!S.sellMode; render(); });
+document.querySelectorAll('#warpBtns .warp').forEach(btn=> btn.addEventListener('click',()=> setSpeed(+btn.dataset.s)));
 
 (function specks(){ const wrap=$('#dishWrap');
   for(let i=0;i<26;i++){ const s=document.createElement('div'); s.className='speck';
