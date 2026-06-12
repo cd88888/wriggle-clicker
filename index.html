@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wriggle Clicker — a C. elegans idle game</title>
+<style>
+  :root{
+    --bg0:#0a1410; --bg1:#0f2018; --panel:#13241c; --panel2:#18301f;
+    --line:#234634; --agar:#1c3a26; --agar2:#27572f;
+    --worm:#e9d9a8; --worm-edge:#c9a86a; --gut:#b6894a;
+    --gold:#ffd24a; --text:#dcefe0; --muted:#8fb89a; --accent:#7ee0a0;
+    --danger:#e06a5a; --evo:#b48cff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    font-family:"Trebuchet MS","Segoe UI",system-ui,sans-serif;
+    background:radial-gradient(1200px 800px at 20% -10%, #14281d 0%, var(--bg1) 45%, var(--bg0) 100%);
+    color:var(--text); overflow:hidden; user-select:none; -webkit-user-select:none;
+  }
+  #ticker{height:30px; line-height:30px; background:#0c1813; border-bottom:1px solid var(--line);
+    overflow:hidden; white-space:nowrap; font-size:13px; color:var(--muted)}
+  #ticker .scroll{display:inline-block; padding-left:100%; animation:tick 42s linear infinite}
+  #ticker b{color:var(--accent)}
+  @keyframes tick{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+
+  #app{display:grid; grid-template-columns:330px 1fr 360px; height:calc(100% - 31px)}
+  .col{height:100%; overflow:auto; padding:16px}
+  .col::-webkit-scrollbar{width:9px}
+  .col::-webkit-scrollbar-thumb{background:var(--line); border-radius:5px}
+
+  /* ----- LEFT ----- */
+  #left{display:flex; flex-direction:column; align-items:center; gap:5px; border-right:1px solid var(--line)}
+  #count{font-size:36px; font-weight:bold; margin-top:4px; text-align:center}
+  #count small{font-size:15px; color:var(--muted); font-weight:normal}
+  #cps{color:var(--muted); font-size:14px}
+  #dishWrap{position:relative; width:260px; height:260px; cursor:pointer; flex:none; margin-top:4px}
+  #dish{width:100%; height:100%; border-radius:50%;
+    background:radial-gradient(circle at 38% 32%, var(--agar2), var(--agar) 60%, #14301d 100%);
+    border:10px solid #0d1b13; box-shadow:0 12px 40px rgba(0,0,0,.5), inset 0 0 50px rgba(0,0,0,.45);
+    display:flex; align-items:center; justify-content:center; transition:transform .06s ease}
+  #dishWrap:active #dish{transform:scale(.96)}
+  #dish.autopulse{animation:autop .25s ease}
+  @keyframes autop{50%{transform:scale(.985)}}
+  #dish svg{width:80%; height:80%; overflow:visible; filter:drop-shadow(0 4px 6px rgba(0,0,0,.4))}
+  .speck{position:absolute; width:4px; height:4px; border-radius:50%; background:rgba(180,220,160,.18)}
+  .float{position:absolute; pointer-events:none; font-weight:bold; color:#fff; font-size:18px;
+    text-shadow:0 1px 3px rgba(0,0,0,.6); animation:floatUp 1s ease-out forwards}
+  .float.auto{color:#9fe0ff; font-size:14px}
+  @keyframes floatUp{from{opacity:1;transform:translate(-50%,0)}to{opacity:0;transform:translate(-50%,-70px)}}
+  .statline{font-size:13px; color:var(--muted)}
+  .statline b{color:var(--text)}
+  #upgrades{display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:12px; max-width:310px}
+  .up{width:50px; height:50px; border-radius:9px; border:2px solid var(--gold);
+    background:linear-gradient(145deg,#2a3a26,#16241a); font-size:23px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; position:relative;
+    transition:transform .08s; box-shadow:0 2px 6px rgba(0,0,0,.4)}
+  .up:hover{transform:translateY(-3px)}
+  .up.locked{opacity:.32; cursor:not-allowed; border-color:var(--line); filter:grayscale(.6)}
+  .up.u-auto{border-color:#7fd0ff} .up.u-global{border-color:var(--accent)} .up.u-finger{border-color:#ff9ed0}
+
+  /* ----- CENTER ----- */
+  #center{display:flex; flex-direction:column; gap:13px}
+  h1{font-size:25px; margin:2px 0 0; text-align:center}
+  h1 .sub{display:block; font-size:12px; color:var(--muted); font-weight:normal; letter-spacing:1px; text-transform:uppercase}
+  .card{background:linear-gradient(180deg,var(--panel2),var(--panel)); border:1px solid var(--line); border-radius:14px; padding:15px}
+  .card h2{margin:0 0 10px; font-size:14px; color:var(--accent); text-transform:uppercase; letter-spacing:1px}
+  .card.evo{border-color:#3a2c5e; background:linear-gradient(180deg,#241a38,#170f26)}
+  .card.evo h2{color:var(--evo)}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:6px 18px}
+  .kv{display:flex; justify-content:space-between; font-size:13px; padding:3px 0; border-bottom:1px dashed rgba(255,255,255,.06)}
+  .kv span:last-child{font-weight:bold}
+  #achWrap{display:flex; flex-wrap:wrap; gap:6px}
+  .ach{width:38px;height:38px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:19px;
+       background:#0e1c14;border:1px solid var(--line);opacity:.28;filter:grayscale(1); cursor:default}
+  .ach.got{opacity:1;filter:none;border-color:var(--gold);box-shadow:0 0 10px rgba(255,210,74,.3)}
+  .btn{background:#1c3324;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 13px;cursor:pointer;font-size:13px}
+  .btn:hover{background:#27452f}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn.danger{border-color:var(--danger);color:#f0b4ab}
+  .btn.evo{border-color:var(--evo);color:#d7c4ff;background:#251a3a}
+  .btn.evo:hover{background:#32265180}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  #ioBox{width:100%;height:54px;margin-top:8px;background:#0c1813;border:1px solid var(--line);border-radius:8px;
+         color:var(--muted);font-size:11px;padding:7px;resize:vertical;font-family:monospace}
+  #saveNote{font-size:12px;color:var(--muted)}
+  .evoUps{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .evoUp{flex:1 1 150px;border:1px solid #3a2c5e;border-radius:9px;padding:9px;background:#1d1430;cursor:pointer;transition:transform .07s}
+  .evoUp:hover{transform:translateY(-2px)}
+  .evoUp.owned{border-color:var(--evo);background:#2a1f48;cursor:default;opacity:.85}
+  .evoUp.cant{opacity:.45;cursor:not-allowed}
+  .evoUp .en{font-weight:bold;font-size:13px;color:#e6dcff}
+  .evoUp .ed{font-size:11px;color:#b29fd6;margin:3px 0 5px;line-height:1.35}
+  .evoUp .ec{font-size:12px;color:var(--evo);font-weight:bold}
+
+  /* ----- RIGHT: store ----- */
+  #right{border-left:1px solid var(--line)}
+  #right h2{margin:0 0 10px;font-size:14px;color:var(--accent);text-transform:uppercase;letter-spacing:1px}
+  #buyBar{display:flex;gap:5px;align-items:center;margin-bottom:11px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+  .modebtn{background:#152a1c;border:1px solid var(--line);color:var(--muted);border-radius:7px;padding:5px 10px;cursor:pointer;font-size:12px;font-weight:bold}
+  .modebtn.active{background:var(--accent);color:#08160d;border-color:var(--accent)}
+  .modebtn.sell{margin-left:auto}
+  .modebtn.sell.active{background:var(--danger);color:#2a0c08;border-color:var(--danger)}
+  .bld{display:flex; align-items:center; gap:10px; padding:9px 10px; margin-bottom:7px; border-radius:11px;
+    background:linear-gradient(180deg,#19311f,#122016); border:1px solid var(--line); cursor:pointer;
+    transition:transform .07s, box-shadow .15s; position:relative; overflow:hidden}
+  .bld:not(.cant):hover{transform:translateX(-3px); box-shadow:-4px 0 0 var(--accent)}
+  .bld.cant{opacity:.5; cursor:not-allowed}
+  .bld.sellmode:not(.cant):hover{box-shadow:-4px 0 0 var(--danger)}
+  .bld .icon{font-size:28px; width:42px; text-align:center; flex:none}
+  .bld .info{flex:1; min-width:0}
+  .bld .name{font-weight:bold; font-size:14px; display:flex; align-items:center; gap:6px}
+  .bld .cost{font-size:12.5px; color:var(--gold)}
+  .bld.cant .cost{color:var(--danger)}
+  .bld.sellmode .cost{color:#9fe0c0}
+  .bld .rate{font-size:11px; color:var(--accent)}
+  .bld .contrib{font-size:10.5px; color:var(--muted)}
+  .bld .bldright{display:flex; flex-direction:column; align-items:flex-end; gap:3px; flex:none}
+  .bld .owned{font-size:27px; font-weight:bold; color:rgba(255,255,255,.14); min-width:24px; text-align:right; line-height:1}
+  .bld .lvlup{font-size:10px; font-weight:bold; padding:2px 7px; border-radius:6px; cursor:pointer;
+    background:#13261a; border:1px solid var(--line); color:var(--muted)}
+  .bld .lvlup.ready{border-color:#e6b8ff; color:#e6b8ff; background:#2a1f3a; box-shadow:0 0 8px rgba(180,140,255,.35)}
+  .bld .lvlup:hover{background:#1d3a26}
+  .bld.locked{display:none}
+  /* nutrient-lump bar */
+  #lumpBar{margin-bottom:11px}
+  .lumpLocked{font-size:11px; color:var(--muted); background:#0e1c14; border:1px dashed var(--line); border-radius:9px; padding:8px 10px; line-height:1.4}
+  .lumpHead{display:flex; justify-content:space-between; font-size:13px; margin-bottom:5px}
+  .lumpHead b{color:#e6b8ff}
+  .lumpEta{color:var(--muted)}
+  .lumpTrack{height:7px; border-radius:5px; background:#10231a; overflow:hidden; border:1px solid var(--line)}
+  .lumpFill{height:100%; background:linear-gradient(90deg,#b48cff,#e6b8ff); transition:width .3s}
+  .lumpHint{font-size:10px; color:var(--muted); margin-top:4px}
+
+  #golden{position:fixed; width:74px; height:74px; cursor:pointer; z-index:50; display:none;
+          animation:gpulse 1.2s ease-in-out infinite; filter:drop-shadow(0 0 14px var(--gold))}
+  @keyframes gpulse{0%,100%{transform:scale(1) rotate(-6deg)}50%{transform:scale(1.12) rotate(6deg)}}
+  #buffBar{position:fixed; top:42px; left:50%; transform:translateX(-50%); z-index:40; display:flex; gap:8px; flex-wrap:wrap; justify-content:center}
+  .buff{background:rgba(255,210,74,.16); border:1px solid var(--gold); color:var(--gold); padding:5px 12px;
+        border-radius:20px; font-size:13px; font-weight:bold; box-shadow:0 0 12px rgba(255,210,74,.3)}
+  .buff.click{background:rgba(127,208,255,.16);border-color:#7fd0ff;color:#bfe9ff;box-shadow:0 0 12px rgba(127,208,255,.3)}
+  .buff.penalty{background:rgba(224,106,90,.16);border-color:var(--danger);color:#f0b4ab;box-shadow:0 0 12px rgba(224,106,90,.3)}
+  #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#13241c;border:1px solid var(--gold);
+         color:var(--gold);padding:10px 18px;border-radius:10px;z-index:60;opacity:0;transition:opacity .3s;font-weight:bold;
+         box-shadow:0 6px 24px rgba(0,0,0,.5);pointer-events:none;max-width:80vw;text-align:center}
+  @media(max-width:1000px){#app{grid-template-columns:1fr} .col{height:auto;overflow:visible} body{overflow:auto} #left,#right{border:none;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div id="ticker"><span class="scroll" id="tickerText"></span></div>
+
+<div id="app">
+  <!-- LEFT -->
+  <div class="col" id="left">
+    <div id="count">0 <small>worms</small></div>
+    <div id="cps">per second: 0</div>
+    <div id="dishWrap" role="button" aria-label="Culture a worm" tabindex="0">
+      <div id="dish">
+        <svg viewBox="0 0 240 120" id="wormSvg">
+          <defs><linearGradient id="wg" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#f3e6bd"/><stop offset="1" stop-color="#dcc488"/>
+          </linearGradient></defs>
+          <path fill="none" stroke="var(--worm-edge)" stroke-width="26" stroke-linecap="round"
+            d="M24,60 C56,18 92,102 124,60 S192,18 216,60">
+            <animate attributeName="d" dur="1.6s" repeatCount="indefinite"
+              values="M24,60 C56,18 92,102 124,60 S192,18 216,60;M24,60 C56,100 92,20 124,60 S192,102 216,60;M24,60 C56,18 92,102 124,60 S192,18 216,60"/>
+          </path>
+          <path fill="none" stroke="url(#wg)" stroke-width="18" stroke-linecap="round"
+            d="M24,60 C56,18 92,102 124,60 S192,18 216,60">
+            <animate attributeName="d" dur="1.6s" repeatCount="indefinite"
+              values="M24,60 C56,18 92,102 124,60 S192,18 216,60;M24,60 C56,100 92,20 124,60 S192,102 216,60;M24,60 C56,18 92,102 124,60 S192,18 216,60"/>
+          </path>
+          <path fill="none" stroke="var(--gut)" stroke-width="3" stroke-linecap="round" opacity=".55"
+            d="M24,60 C56,18 92,102 124,60 S192,18 216,60">
+            <animate attributeName="d" dur="1.6s" repeatCount="indefinite"
+              values="M24,60 C56,18 92,102 124,60 S192,18 216,60;M24,60 C56,100 92,20 124,60 S192,102 216,60;M24,60 C56,18 92,102 124,60 S192,18 216,60"/>
+          </path>
+          <circle cx="24" cy="60" r="11" fill="#f3e6bd" stroke="var(--worm-edge)" stroke-width="3"/>
+        </svg>
+      </div>
+    </div>
+    <div class="statline">per click: <b id="perClick">1</b></div>
+    <div class="statline">auto-clicks/sec: <b id="autoRate">0</b></div>
+    <div class="statline">all-time cultured: <b id="allTime">0</b></div>
+    <div id="upgrades"></div>
+  </div>
+
+  <!-- CENTER -->
+  <div class="col" id="center">
+    <h1>Wriggle Clicker<span class="sub">a <i>Caenorhabditis elegans</i> idle game</span></h1>
+
+    <div class="card">
+      <h2>Lab Stats</h2>
+      <div class="grid2">
+        <div class="kv"><span>Worms in dish</span><span id="s_worms">0</span></div>
+        <div class="kv"><span>Worms / sec</span><span id="s_cps">0</span></div>
+        <div class="kv"><span>Worms / click</span><span id="s_click">1</span></div>
+        <div class="kv"><span>Auto-clicks / sec</span><span id="s_auto">0</span></div>
+        <div class="kv"><span>Clicks made</span><span id="s_clicks">0</span></div>
+        <div class="kv"><span>Golden worms</span><span id="s_gold">0</span></div>
+        <div class="kv"><span>Lab reputation</span><span id="s_rep">+0%</span></div>
+        <div class="kv"><span>Buildings owned</span><span id="s_bld">0</span></div>
+      </div>
+    </div>
+
+    <div class="card evo">
+      <h2>Evolution &nbsp;·&nbsp; Prestige</h2>
+      <div class="grid2">
+        <div class="kv"><span>Genome level</span><span id="e_level">0</span></div>
+        <div class="kv"><span>Genome points</span><span id="e_points">0</span></div>
+        <div class="kv"><span>Prestige bonus</span><span id="e_bonus">+0%</span></div>
+        <div class="kv"><span>Points if you evolve now</span><span id="e_gain">0</span></div>
+      </div>
+      <div class="controls" style="margin-top:10px">
+        <button class="btn evo" id="ascendBtn">🧬 Evolve (reset run for genome points)</button>
+      </div>
+      <div class="evoUps" id="evoUps"></div>
+    </div>
+
+    <div class="card">
+      <h2>Achievements <span id="achCount" style="color:var(--muted);font-weight:normal"></span></h2>
+      <div id="achWrap"></div>
+    </div>
+
+    <div class="card">
+      <h2>The Petri Dish &nbsp;·&nbsp; <span style="color:var(--muted)">save v<span id="verLabel">3</span></span></h2>
+      <div class="controls">
+        <button class="btn" id="saveBtn">Save now</button>
+        <button class="btn" id="exportBtn">Export save</button>
+        <button class="btn" id="importBtn">Import save</button>
+        <button class="btn danger" id="resetBtn">Bleach the plate</button>
+        <span id="saveNote"></span>
+      </div>
+      <textarea id="ioBox" placeholder="Export drops a backup code here. To restore, paste a code and hit Import. Back up before any update!" spellcheck="false"></textarea>
+      <p style="font-size:12px;color:var(--muted);margin:8px 0 0;line-height:1.5">
+        Saves are <b>versioned and keyed by ID</b>, so new buildings, upgrades and features added in updates
+        slot in at zero — your existing colony is never wiped. Hit <b>Export save</b> for a portable backup
+        before trying anything risky.
+      </p>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="col" id="right">
+    <h2>Culture Store</h2>
+    <div id="lumpBar"></div>
+    <div id="buyBar">
+      <span>Quantity:</span>
+      <button class="modebtn active" data-m="1">×1</button>
+      <button class="modebtn" data-m="10">×10</button>
+      <button class="modebtn" data-m="100">×100</button>
+      <button class="modebtn" data-m="max">Max</button>
+      <button class="modebtn sell" id="sellToggle">Sell</button>
+    </div>
+    <div id="store"></div>
+  </div>
+</div>
+
+<div id="golden" title="Golden worm!">
+  <svg viewBox="0 0 240 120"><path fill="none" stroke="#ffd24a" stroke-width="30" stroke-linecap="round"
+    d="M24,60 C56,18 92,102 124,60 S192,18 216,60"/></svg>
+</div>
+<div id="buffBar"></div>
+<div id="toast"></div>
+
+<script>
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+const SAVE_KEY = 'wriggleClickerSave';
+const OLD_KEY  = 'wriggleClickerSave_v1';
+const SAVE_VERSION = 3;
+const PRESTIGE_SCALE = 1e6;   // all-time worms per "genome level" follows cube-root of (allTime/scale)
+const LUMP_UNLOCK = 1e6;      // all-time worms to unlock nutrient lumps (CC unlocks sugar lumps at 1e9 baked)
+const LUMP_TIME   = 6*60*1000;// real-time ms to grow one lump (CC ~20h; shortened for a web session). Matures offline too.
+
+/* ---------- number formatting ---------- */
+const UNITS = ['','K','M','B','T','Qa','Qi','Sx','Sp','Oc','No','Dc','UDc','DDc','TDc','QaDc','QiDc','SxDc','SpDc'];
+function fmt(n){
+  if(!isFinite(n)) return '∞';
+  if(n<0) return '-'+fmt(-n);
+  if(n<1000) return (Math.round(n*10)/10).toString().replace(/\.0$/,'');
+  let u=0; while(n>=1000 && u<UNITS.length-1){ n/=1000; u++; }
+  return n.toFixed(2)+' '+UNITS[u];
+}
+function fmtInt(n){ return n<1000 ? Math.floor(n).toString() : fmt(n); }
+
+/* ---------- BUILDINGS (display order). kind:'cps' = fixed worms/sec; kind:'auto' = clicks/sec ---------- */
+const BUILDINGS = [
+  {id:'dish',  icon:'🧫', name:'Petri Dish',          kind:'cps',  base:15,     cps:0.1,    desc:'A humble agar home for a few worms.'},
+  {id:'autobot',icon:'🤖',name:'Auto-Picker Bot',     kind:'auto', base:50,     rate:0.5,   desc:'A robot arm that taps the dish for you.'},
+  {id:'op50',  icon:'🦠', name:'OP50 Lawn',           kind:'cps',  base:100,    cps:1,      desc:'E. coli bacteria — worm fast food.'},
+  {id:'agar',  icon:'🟢', name:'NGM Agar Plate',      kind:'cps',  base:1100,   cps:8,      desc:'Nematode Growth Medium, the gold standard.'},
+  {id:'inc',   icon:'🌡️', name:'20°C Incubator',      kind:'cps',  base:12000,  cps:47,     desc:'The perfect temperature for happy worms.'},
+  {id:'scope', icon:'🔬', name:'Microscope',          kind:'cps',  base:130000, cps:260,    desc:'Count and pick worms with precision.'},
+  {id:'chip',  icon:'💠', name:'Microfluidic Chip',   kind:'cps',  base:1.4e6,  cps:1400,   desc:'Sort thousands of worms automatically.'},
+  {id:'flask', icon:'⚗️', name:'Liquid Culture',      kind:'cps',  base:2e7,    cps:7800,   desc:'Grow worms by the litre in shaking flasks.'},
+  {id:'crispr',icon:'🧬', name:'CRISPR Station',      kind:'cps',  base:3.3e8,  cps:44000,  desc:'Engineer worms with glowing genomes.'},
+  {id:'seq',   icon:'🖥️', name:'Genome Sequencer',    kind:'cps',  base:5.1e9,  cps:260000, desc:'97 million base pairs, fully read.'},
+  {id:'lab',   icon:'🏛️', name:'Research Institute',  kind:'cps',  base:7.5e10, cps:1.6e6,  desc:'A whole building devoted to the worm.'},
+  {id:'farm',  icon:'🏭', name:'Worm Vivarium',       kind:'cps',  base:1e12,   cps:1e7,    desc:'Industrial-scale climate-controlled colonies.'},
+  {id:'opto',  icon:'💡', name:'Optogenetics Rig',    kind:'cps',  base:1.4e13, cps:6.5e7,  desc:'Drive worm neurons with pulses of light.'},
+  {id:'conn',  icon:'🕸️', name:'Connectome Mapper',   kind:'cps',  base:2e14,   cps:4.3e8,  desc:'Trace all 302 neurons, automatically.'},
+  {id:'sim',   icon:'🧠', name:'AI Worm Simulator',   kind:'cps',  base:3.3e15, cps:2.9e9,  desc:'A whole worm, emulated in silico.'},
+  {id:'station',icon:'🛰️',name:'Orbital Worm Lab',    kind:'cps',  base:5.1e16, cps:2.1e10, desc:'Microgravity breeding, just like the Shuttle.'},
+  {id:'quantum',icon:'⚛️',name:'Quantum Worm Reactor',kind:'cps',  base:7.5e17, cps:1.5e11, desc:'Superposed worms in every state at once.'},
+  {id:'omega', icon:'🌌', name:'Worm Singularity',    kind:'cps',  base:1e19,   cps:1.1e12, desc:'The colony achieves nematode transcendence.'},
+];
+const BLD = Object.fromEntries(BUILDINGS.map(b=>[b.id,b]));
+
+/* per-building doubling tiers (cps buildings only) */
+const BLD_UP_NAMES = {
+  dish:['Sterile Technique','Fresh Agar','Sealed Lids'],
+  op50:['Thicker Lawn','Strep-Resistant OP50','Concentrated Broth'],
+  agar:['Better NGM Recipe','Peptone Boost','Cholesterol Supplement'],
+  inc:['Precise Thermostat','Humidity Control','Stacked Racks'],
+  scope:['DIC Optics','Fluorescence Filters','Confocal Upgrade'],
+  chip:['PDMS Channels','Worm Sorter','Automated Imaging'],
+  flask:['Shaking Incubator','Bioreactor','Continuous Feed'],
+  crispr:['Cas9 Tuning','gRNA Library','HDR Templates'],
+  seq:['Long-Read Tech','Higher Throughput','AI Basecalling'],
+  lab:['Grant Funding','Postdoc Army','Nobel Prize'],
+  farm:['Climate Domes','Automated Feeders','Genetic Diversity'],
+  opto:['Brighter LEDs','Channelrhodopsin 2.0','Closed-Loop Control'],
+  conn:['Electron Microscopy','Synapse AI','Full Wiring Diagram'],
+  sim:['GPU Cluster','Neural Emulation','Digital Evolution'],
+  station:['Zero-G Culture','Solar Arrays','Orbital Ring'],
+  quantum:['Qubit Cooling','Entangled Worms','Many-Worlds Yield'],
+  omega:['Self-Replication','Worm Hivemind','Transcendence'],
+};
+
+/* click-power upgrades */
+const CLICK_UPS = [
+  {id:'c1', icon:'👆', name:'Plump Worms',       cost:100,  mult:2, desc:'Click cultures x2 worms.'},
+  {id:'c2', icon:'✋', name:'Touch Receptors',    cost:1200, mult:2, desc:'Worms sense your tap. Clicks x2.'},
+  {id:'c3', icon:'🫧', name:'Mechanosensation',   cost:25000,mult:2, desc:'Gentle-touch neurons fire. Clicks x2.'},
+  {id:'c4', icon:'🛌', name:'Dauer Larvae',       cost:5e5,  mult:2, desc:'Stress-resistant worms. Clicks x2.'},
+  {id:'c5', icon:'⚥',  name:'Hermaphrodite Boost',cost:2e7,  mult:2, desc:'Self-fertilising. Clicks x2.'},
+  {id:'c6', icon:'🌌', name:'Spaceflight Strain', cost:1e9,  mult:3, desc:'Worms that flew on the Shuttle. Clicks x3.'},
+  {id:'c7', icon:'🔆', name:'Quantum Tweezers',   cost:5e10, mult:3, desc:'Pick single worms with light. Clicks x3.'},
+  {id:'c8', icon:'⚡', name:'Optogenetic Tap',    cost:2e12, mult:3, desc:'Tap neurons directly. Clicks x3.'},
+];
+
+/* autoclicker upgrades (double auto-click rate) */
+const AUTO_UPS = [
+  {id:'a1', icon:'⚙️', name:'Faster Servos',     cost:1000, mult:2, desc:'Auto-Picker Bots tap twice as fast.'},
+  {id:'a2', icon:'👁️', name:'Machine Vision',    cost:6e4,  mult:2, desc:'Bots find worms faster. Auto-rate x2.'},
+  {id:'a3', icon:'🦾', name:'Parallel Grippers', cost:3e6,  mult:2, desc:'Many arms at once. Auto-rate x2.'},
+  {id:'a4', icon:'🐝', name:'Swarm Robotics',    cost:2e8,  mult:2, desc:'Coordinated bot swarms. Auto-rate x2.'},
+  {id:'a5', icon:'🧠', name:'Neural-Net Picker', cost:1e10, mult:2, desc:'AI-driven picking. Auto-rate x2.'},
+];
+
+/* global production multipliers */
+const GLOBAL_UPS = [
+  {id:'g1', icon:'🧴', name:'Sterile Hood',         cost:5e5,  mult:1.05, req:s=>s.allTime>=2.5e5, desc:'All worm production +5%.'},
+  {id:'g2', icon:'📋', name:'Standardized Protocols',cost:5e7,  mult:1.05, req:s=>s.allTime>=2.5e7, desc:'All worm production +5%.'},
+  {id:'g3', icon:'🌐', name:'Open Worm Atlas',      cost:5e9,  mult:1.07, req:s=>s.allTime>=2.5e9, desc:'All worm production +7%.'},
+  {id:'g4', icon:'🤝', name:'Global Worm Consortium',cost:5e12, mult:1.10, req:s=>s.allTime>=2.5e12,desc:'All worm production +10%.'},
+];
+
+/* "Thousand Fingers" synergy — each click & bot tap gains a flat bonus per non-bot building */
+const FINGER_UPS = [
+  {id:'tf1', icon:'🖐️', name:'Worm Synergy',   cost:1e5,  desc:'Each click & bot tap gains +0.1/s per non-bot building.'},
+  {id:'tf2', icon:'🤲', name:'Mass Handling',   cost:5e7,  need:'tf1', desc:'Worm Synergy effect ×5.'},
+  {id:'tf3', icon:'🦿', name:'Robotic Synergy', cost:5e10, need:'tf2', desc:'Worm Synergy effect ×10 more.'},
+];
+
+/* prestige / evolution upgrades — bought with genome points */
+const EVO_UPS = [
+  {id:'twin',     icon:'⚥',  name:'Twin Genome',        cost:1,  desc:'Permanently double click power.'},
+  {id:'lucky',    icon:'🍀', name:'Lucky Genome',       cost:2,  desc:'Golden worms appear ~35% more often.'},
+  {id:'mito',     icon:'🔋', name:'Mitochondrial Boost',cost:3,  desc:'+10% to all worm production, forever.'},
+  {id:'goldrush', icon:'👑', name:'Golden Strain',      cost:6,  desc:'Golden-worm buffs last 50% longer.'},
+  {id:'headstart',icon:'❄️', name:'Frozen Stock',       cost:8,  desc:'Begin every evolution with 1M worms banked.'},
+  {id:'mega',     icon:'🧬', name:'Megabase Genome',    cost:15, desc:'+25% to all worm production, forever.'},
+];
+
+/* 15 tiered upgrades per building, each ×2 → max ×32,768 (Cookie Clicker's exact tier count).
+   Unlock requirements (building count) and cost multipliers mirror CC's escalating tiers. */
+const TIER_REQ  = [1,5,25,50,100,150,200,250,300,350,400,450,500,550,600];
+const TIER_COST = [10,100,1e3,1e4,1e5,1e6,1e7,1e8,1e9,1e10,1e11,1e12,1e13,1e14,1e15];
+const ROMAN = ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII','XIII','XIV','XV'];
+
+/* assemble run-upgrade list (click + auto + finger + global + per-building tiers) */
+const ALL_UPGRADES = [];
+CLICK_UPS.forEach(u => ALL_UPGRADES.push({...u, kind:'click'}));
+AUTO_UPS.forEach(u  => ALL_UPGRADES.push({...u, kind:'auto'}));
+FINGER_UPS.forEach(u=> ALL_UPGRADES.push({...u, kind:'finger'}));
+GLOBAL_UPS.forEach(u=> ALL_UPGRADES.push({...u, kind:'global'}));
+BUILDINGS.filter(b=>b.kind==='cps').forEach(b=>{
+  for(let i=0;i<15;i++){
+    const named = BLD_UP_NAMES[b.id] && BLD_UP_NAMES[b.id][i];
+    ALL_UPGRADES.push({id:b.id+'_t'+i, kind:'bld', target:b.id, mult:2, icon:b.icon,
+      name: named || `${b.name} ${ROMAN[i]}`,
+      cost: Math.round(b.base*TIER_COST[i]), req:TIER_REQ[i],
+      desc:`${b.name} produce twice as many worms (tier ${i+1}/15).`});
+  }
+});
+const UP = Object.fromEntries(ALL_UPGRADES.map(u=>[u.id,u]));
+
+const FACTS = [
+  'an adult hermaphrodite has exactly <b>959</b> somatic cells, every one mapped.',
+  'it was the <b>first animal</b> to have its full neural wiring diagram (302 neurons) traced.',
+  'its genome — <b>~100 million</b> base pairs — was sequenced in 1998, an animal first.',
+  'it is <b>transparent</b>, so you can watch every cell divide under a microscope.',
+  'live worms <b>survived the Columbia disaster</b> in 2003 and were recovered alive.',
+  'it grows from egg to adult in about <b>3 days</b> at 20°C.',
+  'in hard times larvae enter a <b>"dauer"</b> stage and can wait for months.',
+  'six <b>Nobel Prizes</b> have used C. elegans research.',
+  'it can be <b>frozen</b> in liquid nitrogen and thawed back to life years later.',
+  'most are <b>self-fertilising hermaphrodites</b>; males are rare.',
+  'it has about <b>20,000 genes</b> — roughly the human count.',
+];
+
+const ACHS = [
+  {id:'a1', icon:'🥚', name:'First Wriggle',   t:s=>s.allTime>=1},
+  {id:'a2', icon:'💯', name:'Hundred Club',    t:s=>s.allTime>=100},
+  {id:'a3', icon:'🧫', name:'Got a Dish',      t:s=>s.counts.dish>=1},
+  {id:'a4', icon:'🤖', name:'Set & Forget',    t:s=>s.counts.autobot>=1},
+  {id:'a5', icon:'🦠', name:'Lawn Care',       t:s=>s.counts.op50>=1},
+  {id:'a6', icon:'🔬', name:'Under the Scope', t:s=>s.counts.scope>=1},
+  {id:'a7', icon:'🧬', name:'Gene Hacker',     t:s=>s.counts.crispr>=1},
+  {id:'a8', icon:'🏛️', name:'Big Science',     t:s=>s.counts.lab>=1},
+  {id:'a9', icon:'🌟', name:'Millionaire',     t:s=>s.allTime>=1e6},
+  {id:'a10',icon:'⚡', name:'Billionaire',     t:s=>s.allTime>=1e9},
+  {id:'a11',icon:'👑', name:'Golden Touch',    t:s=>s.goldenClicks>=1},
+  {id:'a12',icon:'🖱️', name:'Click Fiend',     t:s=>s.clicks>=1000},
+  {id:'a13',icon:'🐝', name:'Robot Army',      t:s=>s.counts.autobot>=50},
+  {id:'a14',icon:'⚛️', name:'Quantum Leap',    t:s=>s.counts.quantum>=1},
+  {id:'a15',icon:'🌌', name:'Singularity',     t:s=>s.counts.omega>=1},
+  {id:'a16',icon:'🧬', name:'Reborn',          t:s=>s.prestige.level>=1},
+  {id:'a17',icon:'✨', name:'Highly Evolved',  t:s=>s.prestige.level>=10},
+  {id:'a18',icon:'🏭', name:'Mass Production',  t:s=>totalBuildings()>=300},
+];
+
+/* ---------- state ---------- */
+function fresh(){
+  const s = {
+    worms:0, allTime:0, clicks:0, hand:0, goldenClicks:0,
+    counts:{}, bought:new Set(),
+    achs:new Set(),
+    prestige:{ level:0, spent:0, ups:new Set() },
+    lumps:0, lumpStart:0, levels:{},
+    buyMode:'1', sellMode:false,
+  };
+  BUILDINGS.forEach(b=> s.counts[b.id]=0);
+  return s;
+}
+let S = fresh();
+
+/* ---------- save / load / migrate (update-safe) ---------- */
+function serialize(){
+  return {
+    v:SAVE_VERSION, worms:S.worms, allTime:S.allTime, clicks:S.clicks, hand:S.hand,
+    goldenClicks:S.goldenClicks, counts:S.counts, bought:[...S.bought], achs:[...S.achs],
+    prestige:{ level:S.prestige.level, spent:S.prestige.spent, ups:[...S.prestige.ups] },
+    lumps:S.lumps, lumpStart:S.lumpStart, levels:S.levels,
+    buyMode:S.buyMode, sellMode:S.sellMode, t:Date.now()
+  };
+}
+function migrate(d){
+  // bring any older save shape up to the current version. New keys default; nothing is dropped.
+  if(!d.v || d.v<2){
+    d.prestige = d.prestige || { level:0, spent:0, ups:[] };
+    d.buyMode = d.buyMode || '1'; d.sellMode = !!d.sellMode;
+    d.v = 2;
+  }
+  if(d.v<3){
+    d.lumps = d.lumps || 0; d.lumpStart = d.lumpStart || 0; d.levels = d.levels || {};
+    d.v = 3;
+  }
+  return d;
+}
+function applyLoaded(d){
+  d = migrate(d);
+  S.worms=+d.worms||0; S.allTime=+d.allTime||0; S.clicks=+d.clicks||0;
+  S.hand=+d.hand||0; S.goldenClicks=+d.goldenClicks||0;
+  BUILDINGS.forEach(b=> S.counts[b.id]=(d.counts&&+d.counts[b.id])||0);   // new buildings -> 0
+  S.bought=new Set((d.bought||[]).filter(id=>UP[id]));                    // ignore unknown ids
+  S.achs=new Set((d.achs||[]).filter(id=>ACHS.some(a=>a.id===id)));
+  const p=d.prestige||{};
+  S.prestige={ level:+p.level||0, spent:+p.spent||0, ups:new Set((p.ups||[]).filter(id=>EVO_UPS.some(e=>e.id===id))) };
+  S.lumps=+d.lumps||0; S.lumpStart=+d.lumpStart||0;
+  S.levels={}; if(d.levels) BUILDINGS.forEach(b=>{ if(d.levels[b.id]) S.levels[b.id]=+d.levels[b.id]; });
+  S.buyMode=['1','10','100','max'].includes(d.buyMode)?d.buyMode:'1';
+  S.sellMode=!!d.sellMode;
+  tickLumps();   // credit any lumps matured while away / since the save was taken
+}
+function load(){
+  let raw=null, fromOld=false;
+  try{ raw=localStorage.getItem(SAVE_KEY); }catch(e){}
+  if(!raw){ try{ raw=localStorage.getItem(OLD_KEY); fromOld=!!raw; }catch(e){} }
+  if(!raw) return;
+  let d; try{ d=JSON.parse(raw); }catch(e){ return; }
+  applyLoaded(d);
+  if(fromOld){ flash('Imported your v1 save — progress kept!'); save(); }
+  // offline production (half rate, capped 8h)
+  if(d.t){
+    const secs=Math.min((Date.now()-d.t)/1000, 8*3600);
+    const off=liveCps()*secs*0.5;
+    if(off>10){ S.worms+=off; S.allTime+=off; setTimeout(()=>flash('Welcome back! +'+fmt(off)+' worms while away.'),500); }
+  }
+}
+function save(){ try{ localStorage.setItem(SAVE_KEY, JSON.stringify(serialize())); flash('Saved.'); }catch(e){ flash('Save failed.'); } }
+function exportSave(){
+  try{
+    const code=btoa(unescape(encodeURIComponent(JSON.stringify(serialize()))));
+    $('#ioBox').value=code; $('#ioBox').select(); flash('Save exported to the box — copy it somewhere safe.');
+  }catch(e){ flash('Export failed.'); }
+}
+function importSave(){
+  const code=$('#ioBox').value.trim(); if(!code){ flash('Paste a save code first.'); return; }
+  try{
+    const json=decodeURIComponent(escape(atob(code)));
+    const d=JSON.parse(json);
+    if(typeof d!=='object'||d.worms===undefined) throw 0;
+    if(!confirm('Import this save? It replaces your current progress.')) return;
+    applyLoaded(d); buffs=[]; render(); save(); flash('Save imported!');
+  }catch(e){ flash('That code is not a valid save.'); }
+}
+
+/* ---------- production math (no recursion: auto buildings use clickPowerBase, not clickPower) ---------- */
+function totalBuildings(){ let n=0; BUILDINGS.forEach(b=> n+=S.counts[b.id]); return n; }
+function bldMult(id){ let m=1; for(let i=0;i<15;i++) if(S.bought.has(id+'_t'+i)) m*=2; return m; }
+function autoMult(){ let m=1; AUTO_UPS.forEach(u=>{ if(S.bought.has(u.id)) m*=u.mult; }); return m; }
+/* Thousand-Fingers synergy: flat bonus per non-bot building, added to every click & bot tap */
+function fingerBonus(){
+  if(!S.bought.has('tf1')) return 0;
+  let per=0.1; if(S.bought.has('tf2')) per*=5; if(S.bought.has('tf3')) per*=10;
+  return per * Math.max(0, totalBuildings()-S.counts.autobot);
+}
+function clickPowerBase(){
+  let m=1; CLICK_UPS.forEach(u=>{ if(S.bought.has(u.id)) m*=u.mult; });
+  if(S.prestige.ups.has('twin')) m*=2;
+  return m;
+}
+function globalMult(){
+  let m=(1 + S.prestige.level*0.01) * (1 + S.achs.size*0.01);
+  GLOBAL_UPS.forEach(u=>{ if(S.bought.has(u.id)) m*=u.mult; });
+  if(S.prestige.ups.has('mito')) m*=1.10;
+  if(S.prestige.ups.has('mega')) m*=1.25;
+  return m;
+}
+/* steady-state production per single unit of a building (excludes temporary buffs) */
+/* nutrient-lump building levels: each level = +1% to that building's output */
+function bldLevel(id){ return S.levels[id]||0; }
+function levelBonus(id){ return 1 + bldLevel(id)*0.01; }
+function unitProd(b){
+  if(b.kind==='auto') return b.rate * autoMult() * (clickPowerBase()+fingerBonus()) * globalMult() * levelBonus(b.id);
+  return b.cps * bldMult(b.id) * globalMult() * levelBonus(b.id);
+}
+function buildingTotal(b){ return S.counts[b.id]*unitProd(b); }
+function rawCps(){ let t=0; BUILDINGS.forEach(b=> t+=buildingTotal(b)); return t; }
+function frenzyMult(){ let m=1; buffs.forEach(x=>{ if(x.kind==='cps') m*=x.mult; }); return m; }
+function clickFrenzyMult(){ let m=1; buffs.forEach(x=>{ if(x.kind==='click') m*=x.mult; }); return m; }
+function liveCps(){ return rawCps()*frenzyMult(); }
+function autoClicksPerSec(){ let t=0; BUILDINGS.forEach(b=>{ if(b.kind==='auto') t+=S.counts[b.id]*b.rate*autoMult(); }); return t; }
+function clickPower(){ return (clickPowerBase()+fingerBonus())*globalMult()*clickFrenzyMult() + liveCps()*0.01; }
+
+/* ---------- pricing / bulk buy / sell ---------- */
+const GROW=1.15;
+function priceOne(b){ return Math.ceil(b.base*Math.pow(GROW,S.counts[b.id])); }
+function bulkCost(b,n){
+  const k=S.counts[b.id];
+  return Math.ceil(b.base*Math.pow(GROW,k)*(Math.pow(GROW,n)-1)/(GROW-1));
+}
+function maxAffordable(b){
+  const k=S.counts[b.id];
+  const v = Math.floor( Math.log((S.worms*(GROW-1))/(b.base*Math.pow(GROW,k))+1)/Math.log(GROW) );
+  return Math.max(0, v);
+}
+function sellRefund(b,n){
+  const k=S.counts[b.id]; n=Math.min(n,k);
+  // 25% refund of the price each of the top n units cost
+  const gross=b.base*(Math.pow(GROW,k)-Math.pow(GROW,k-n))/(GROW-1);
+  return Math.floor(gross*0.25);
+}
+function curQty(b){
+  if(S.sellMode){ return S.buyMode==='max' ? S.counts[b.id] : Math.min(parseInt(S.buyMode), S.counts[b.id]); }
+  return S.buyMode==='max' ? Math.max(1,maxAffordable(b)) : parseInt(S.buyMode);
+}
+
+/* ---------- buffs ---------- */
+let buffs=[];
+function buffDur(ms){ return S.prestige.ups.has('goldrush') ? ms*1.5 : ms; }
+
+/* ---------- nutrient lumps (sugar-lump analog) ---------- */
+function lumpsUnlocked(){ return S.allTime>=LUMP_UNLOCK; }
+function tickLumps(){
+  if(!lumpsUnlocked()) return;
+  if(!S.lumpStart) S.lumpStart=Date.now();
+  const matured=Math.floor((Date.now()-S.lumpStart)/LUMP_TIME);
+  if(matured>0){ S.lumps+=matured; S.lumpStart+=matured*LUMP_TIME; }   // accrues offline too (lumpStart persists)
+}
+function lumpProgress(){ return (!lumpsUnlocked()||!S.lumpStart) ? 0 : Math.min(1,(Date.now()-S.lumpStart)/LUMP_TIME); }
+function lumpETA(){ return (!lumpsUnlocked()||!S.lumpStart) ? 0 : Math.max(0, LUMP_TIME-(Date.now()-S.lumpStart)); }
+function levelCost(id){ return bldLevel(id)+1; }   // L -> L+1 costs L+1 lumps (Cookie Clicker rule)
+function levelUp(b){
+  const cost=levelCost(b.id);
+  if(S.lumps<cost){ flash(`Need ${cost} nutrient lump${cost>1?'s':''} to level ${b.name}`); return; }
+  S.lumps-=cost; S.levels[b.id]=bldLevel(b.id)+1;
+  flash(`${b.name} → level ${S.levels[b.id]} (+1% output)`); render();
+}
+
+/* ---------- DOM build ---------- */
+function buildStore(){
+  const store=$('#store'); store.innerHTML='';
+  BUILDINGS.forEach(b=>{
+    const el=document.createElement('div'); el.className='bld'; el.dataset.id=b.id;
+    el.innerHTML=`<div class="icon">${b.icon}</div>
+      <div class="info">
+        <div class="name">${b.name}</div>
+        <div class="cost"></div>
+        <div class="rate"></div>
+        <div class="contrib"></div>
+      </div>
+      <div class="bldright">
+        <div class="owned">0</div>
+        <button class="lvlup" title="Spend nutrient lumps to level this building">Lv 0</button>
+      </div>`;
+    el.addEventListener('click',()=>clickBuilding(b));
+    el.querySelector('.lvlup').addEventListener('click',e=>{ e.stopPropagation(); levelUp(b); });
+    store.appendChild(el);
+  });
+}
+function buildUpgradesStatic(){ /* upgrades rendered dynamically */ }
+function buildAchs(){
+  const w=$('#achWrap'); w.innerHTML='';
+  ACHS.forEach(a=>{ const el=document.createElement('div'); el.className='ach'; el.id='ach_'+a.id;
+    el.title=a.name; el.textContent=a.icon; w.appendChild(el); });
+}
+function buildEvoUps(){
+  const w=$('#evoUps'); w.innerHTML='';
+  EVO_UPS.forEach(e=>{
+    const el=document.createElement('div'); el.className='evoUp'; el.id='evo_'+e.id;
+    el.innerHTML=`<div class="en">${e.icon} ${e.name}</div><div class="ed">${e.desc}</div><div class="ec">${e.cost} pt${e.cost>1?'s':''}</div>`;
+    el.addEventListener('click',()=>buyEvo(e));
+    w.appendChild(el);
+  });
+}
+function buildTicker(){
+  const t=FACTS.map(f=>`🪱 Did you know — C. elegans ${f}`).join('   •   ');
+  $('#tickerText').innerHTML=t+'   •   '+t;
+}
+
+/* ---------- actions ---------- */
+function clickBuilding(b){
+  const qty=curQty(b);
+  if(S.sellMode){
+    if(qty<=0) return;
+    S.worms+=sellRefund(b,qty); S.counts[b.id]-=qty; render(); return;
+  }
+  const cost=bulkCost(b,qty);
+  if(S.worms<cost || qty<=0) return;
+  S.worms-=cost; S.counts[b.id]+=qty; render();
+}
+function buyUpgrade(u){
+  if(S.bought.has(u.id) || S.worms<u.cost) return;
+  if(u.need && !S.bought.has(u.need)) return;
+  if(u.kind==='bld' && S.counts[u.target]<u.req) return;
+  if(u.kind==='global' && u.req && !u.req(S)) return;
+  S.worms-=u.cost; S.bought.add(u.id); flash('Researched: '+u.name); render();
+}
+function prestigeFromAllTime(){ return Math.floor(Math.cbrt(S.allTime/PRESTIGE_SCALE)); }
+function ascend(){
+  const target=prestigeFromAllTime(), gain=target-S.prestige.level;
+  if(gain<=0){ flash('Not enough all-time worms to gain a genome point yet.'); return; }
+  if(!confirm(`Evolve now?\n\nYou will gain ${gain} genome point${gain>1?'s':''} (permanent +${gain}% production each level).\n\nThis RESETS your worms, buildings and run-upgrades. Achievements and genome upgrades are kept.`)) return;
+  S.prestige.level=target;
+  // reset the run
+  S.worms=0; BUILDINGS.forEach(b=>S.counts[b.id]=0); S.bought=new Set(); buffs=[];
+  if(S.prestige.ups.has('headstart')){ S.worms=1e6; }
+  flash(`🧬 Evolved! +${gain} genome points. Prestige bonus now +${S.prestige.level}%.`);
+  render(); save();
+}
+function buyEvo(e){
+  if(S.prestige.ups.has(e.id)) return;
+  const avail=S.prestige.level-S.prestige.spent;
+  if(avail<e.cost){ flash('Need '+e.cost+' genome points.'); return; }
+  S.prestige.spent+=e.cost; S.prestige.ups.add(e.id); flash('Evolved trait: '+e.name); render(); save();
+}
+
+/* ---------- click feedback ---------- */
+function doClick(x,y){
+  const g=clickPower(); S.worms+=g; S.allTime+=g; S.clicks++; S.hand+=g;
+  floatText('+'+fmt(g), x, y);
+}
+function floatText(txt,x,y,cls){
+  const wrap=$('#dishWrap'); const r=wrap.getBoundingClientRect();
+  const f=document.createElement('div'); f.className='float'+(cls?' '+cls:''); f.textContent=txt;
+  f.style.left=(x-r.left)+'px'; f.style.top=(y-r.top)+'px';
+  wrap.appendChild(f); setTimeout(()=>f.remove(),1000);
+}
+
+/* ---------- golden worm ---------- */
+let goldenTimer=0, goldenNext=rand(70,140), stormEnd=0;
+function rand(a,b){ return a+Math.random()*(b-a); }
+function spawnGolden(){
+  const g=$('#golden'); g.style.display='block';
+  g.style.left=rand(40, innerWidth-120)+'px'; g.style.top=rand(80, innerHeight-160)+'px';
+  const life=setTimeout(()=>{ g.style.display='none'; }, 9000);
+  g.onclick=()=>{
+    clearTimeout(life); g.style.display='none'; S.goldenClicks++;
+    const roll=Math.random();
+    if(roll<0.35){
+      // Cookie Clicker "Lucky": min(15% of bank, 15 minutes of CpS) + 13
+      const reward=Math.min(S.worms*0.15, liveCps()*900)+13;
+      S.worms+=reward; S.allTime+=reward; flash('🍀 Lucky! +'+fmt(reward)+' worms');
+    }else if(roll<0.62){
+      // CC Frenzy: x7 for 77s
+      buffs.push({name:'Wriggle Frenzy ×7', kind:'cps', mult:7, until:Date.now()+buffDur(77000)});
+      flash('🔥 Wriggle Frenzy! ×7 production for 77s');
+    }else if(roll<0.80){
+      // CC Click Frenzy: x777 for 13s
+      buffs.push({name:'Click Frenzy ×777', kind:'click', mult:777, until:Date.now()+buffDur(13000)});
+      flash('🖱️ Click Frenzy! ×777 click power for 13s');
+    }else if(roll<0.90){
+      // CC Cookie Storm: short x7 + a flurry of rapidly-spawning golden worms (7s)
+      buffs.push({name:'Worm Storm ×7', kind:'cps', mult:7, until:Date.now()+buffDur(7000)});
+      stormEnd=Date.now()+buffDur(7000);
+      flash('🌪️ Worm Storm! Click the flurry, fast!');
+    }else if(roll<0.97){
+      // CC Dragon Harvest: x15 for 60s
+      buffs.push({name:'Wriggle Bloom ×15', kind:'cps', mult:15, until:Date.now()+buffDur(60000)});
+      flash('🌟 Wriggle Bloom! ×15 production for 60s');
+    }else{
+      // CC Clot: rare penalty, x0.5 production for 66s
+      buffs.push({name:'Clot ×0.5', kind:'cps', mult:0.5, penalty:true, until:Date.now()+66000});
+      flash('🩸 Clot! Production halved for 66s — unlucky!');
+    }
+    render();
+  };
+}
+
+/* ---------- toast ---------- */
+let toastT=null;
+function flash(msg){ const t=$('#toast'); t.textContent=msg; t.style.opacity='1'; clearTimeout(toastT); toastT=setTimeout(()=>t.style.opacity='0',2300); }
+
+/* ---------- render ---------- */
+function renderUpgrades(){
+  const wrap=$('#upgrades'); wrap.innerHTML='';
+  const visible=ALL_UPGRADES.filter(u=>{
+    if(S.bought.has(u.id)) return false;
+    if(u.need && !S.bought.has(u.need)) return false;
+    if(u.kind==='bld') return S.counts[u.target]>=u.req;
+    if(u.kind==='global') return u.req? u.req(S) : true;
+    return true;
+  }).sort((a,b)=>a.cost-b.cost).slice(0,14);
+  visible.forEach(u=>{
+    const el=document.createElement('div');
+    const afford=S.worms>=u.cost;
+    el.className='up u-'+(u.kind)+(afford?'':' locked');
+    el.textContent=u.icon;
+    el.title=`${u.name}\n${u.desc}\nCost: ${fmt(u.cost)} worms`;
+    el.addEventListener('click',()=>buyUpgrade(u));
+    wrap.appendChild(el);
+  });
+}
+function renderStore(){
+  const total=rawCps();
+  document.querySelectorAll('.bld').forEach(el=>{
+    const b=BLD[el.dataset.id];
+    if(!b) return;
+    const owned=S.counts[b.id];
+    el.querySelector('.owned').textContent=owned;
+    // hide buildings far above reach until close (keeps store tidy)
+    const reachable = owned>0 || S.worms>=b.base*0.3 || b.base<=Math.max(15, (window.__seenBase||0));
+    if(owned>0) window.__seenBase=Math.max(window.__seenBase||0, b.base);
+    el.classList.toggle('locked', !reachable);
+    el.classList.toggle('sellmode', S.sellMode);
+
+    // nutrient-lump level-up button
+    const lvlBtn=el.querySelector('.lvlup');
+    const lvl=bldLevel(b.id), lcost=levelCost(b.id);
+    if(lumpsUnlocked()){
+      lvlBtn.style.display='';
+      lvlBtn.textContent='Lv '+lvl;
+      lvlBtn.title=`Level ${lvl} (+${lvl}% output). Next level costs ${lcost} nutrient lump${lcost>1?'s':''}.`;
+      lvlBtn.classList.toggle('ready', S.lumps>=lcost);
+    } else { lvlBtn.style.display='none'; }
+
+    const each=unitProd(b);
+    const qty=curQty(b);
+    const nameEl=el.querySelector('.name');
+    const lvlTxt = owned>0 ? ` <span style="color:var(--muted);font-weight:normal;font-size:11px">×${owned}</span>` : '';
+    nameEl.innerHTML=b.name+lvlTxt;
+
+    // rate line: production per unit, plus auto clicks for bots
+    if(b.kind==='auto'){
+      el.querySelector('.rate').textContent=`+${fmt(each)}/s each · ${fmt(b.rate*autoMult())} clicks/s each`;
+    }else{
+      el.querySelector('.rate').textContent=`+${fmt(each)}/s each`;
+    }
+    const contrib=buildingTotal(b);
+    const pct = total>0 ? (contrib/total*100) : 0;
+    el.querySelector('.contrib').textContent = owned>0
+      ? `colony output: ${fmt(contrib)}/s · ${pct.toFixed(1)}% of total`
+      : `not yet in your colony`;
+
+    const costEl=el.querySelector('.cost');
+    if(S.sellMode){
+      const sq=Math.min(qty,owned);
+      const refund=sellRefund(b,sq);
+      el.classList.toggle('cant', sq<=0);
+      costEl.textContent = sq>0 ? `sell ${sq} → +🪱 ${fmt(refund)}` : `nothing to sell`;
+    }else{
+      const cost=bulkCost(b,qty);
+      const afford=S.worms>=cost;
+      el.classList.toggle('cant', !afford);
+      const delta=qty*each;
+      costEl.textContent=`🪱 ${fmt(cost)} · buy ${qty} → +${fmt(delta)}/s`;
+    }
+  });
+}
+function renderAchs(){
+  ACHS.forEach(a=>{
+    if(!S.achs.has(a.id) && a.t(S)){ S.achs.add(a.id); flash('🏆 Achievement: '+a.name); }
+    const el=$('#ach_'+a.id); if(el) el.classList.toggle('got', S.achs.has(a.id));
+  });
+  $('#achCount').textContent=`(${S.achs.size}/${ACHS.length})`;
+}
+function renderEvo(){
+  const target=prestigeFromAllTime(), gain=Math.max(0,target-S.prestige.level);
+  const avail=S.prestige.level-S.prestige.spent;
+  $('#e_level').textContent=S.prestige.level;
+  $('#e_points').textContent=avail;
+  $('#e_bonus').textContent='+'+S.prestige.level+'%';
+  $('#e_gain').textContent=gain;
+  $('#ascendBtn').disabled = gain<=0;
+  $('#ascendBtn').textContent = gain>0 ? `🧬 Evolve now → +${gain} genome point${gain>1?'s':''}` : '🧬 Evolve (need more all-time worms)';
+  EVO_UPS.forEach(e=>{
+    const el=$('#evo_'+e.id); if(!el) return;
+    const owned=S.prestige.ups.has(e.id);
+    el.classList.toggle('owned', owned);
+    el.classList.toggle('cant', !owned && avail<e.cost);
+  });
+}
+function renderBuffs(){
+  const now=Date.now(); buffs=buffs.filter(b=>b.until>now);
+  const bar=$('#buffBar'); bar.innerHTML='';
+  buffs.forEach(b=>{ const el=document.createElement('div');
+    el.className='buff'+(b.kind==='click'?' click':'')+(b.penalty?' penalty':'');
+    el.textContent=`${b.name} · ${Math.ceil((b.until-now)/1000)}s`; bar.appendChild(el); });
+}
+function renderLumps(){
+  const bar=$('#lumpBar');
+  if(!lumpsUnlocked()){
+    bar.innerHTML=`<div class="lumpLocked">🍬 Nutrient Lumps unlock at ${fmt(LUMP_UNLOCK)} all-time worms — spend them to level up buildings (+1% each).</div>`;
+    return;
+  }
+  const pct=Math.round(lumpProgress()*100);
+  const eta=Math.ceil(lumpETA()/1000), mm=Math.floor(eta/60), ss=String(eta%60).padStart(2,'0');
+  bar.innerHTML=`<div class="lumpHead"><span>🍬 Nutrient Lumps: <b>${fmtInt(S.lumps)}</b></span><span class="lumpEta">next in ${mm}:${ss}</span></div>
+    <div class="lumpTrack"><div class="lumpFill" style="width:${pct}%"></div></div>
+    <div class="lumpHint">Tap <b>Lv</b> on a building to spend lumps. Levels &amp; lumps survive evolution.</div>`;
+}
+function render(){
+  $('#count').innerHTML=fmtInt(S.worms)+' <small>worms</small>';
+  const c=liveCps();
+  $('#cps').textContent='per second: '+fmt(c);
+  $('#perClick').textContent=fmt(clickPower());
+  $('#autoRate').textContent=fmt(autoClicksPerSec());
+  $('#allTime').textContent=fmt(S.allTime);
+  $('#s_worms').textContent=fmtInt(S.worms);
+  $('#s_cps').textContent=fmt(c);
+  $('#s_click').textContent=fmt(clickPower());
+  $('#s_auto').textContent=fmt(autoClicksPerSec());
+  $('#s_clicks').textContent=fmtInt(S.clicks);
+  $('#s_gold').textContent=S.goldenClicks;
+  $('#s_rep').textContent='+'+S.achs.size+'%';
+  $('#s_bld').textContent=totalBuildings();
+  renderUpgrades(); renderStore(); renderAchs(); renderEvo(); renderBuffs(); renderLumps();
+  // buy-mode buttons
+  document.querySelectorAll('#buyBar .modebtn[data-m]').forEach(btn=>btn.classList.toggle('active', !S.sellMode && btn.dataset.m===S.buyMode));
+  $('#sellToggle').classList.toggle('active', S.sellMode);
+  document.title=fmtInt(S.worms)+' worms — Wriggle Clicker';
+}
+
+/* ---------- main loop ---------- */
+let last=performance.now(), autoVisualAcc=0;
+function loop(now){
+  const dt=Math.min((now-last)/1000, 0.25); last=now;
+  const gain=liveCps()*dt; S.worms+=gain; S.allTime+=gain;
+  tickLumps();
+  // cosmetic auto-click pulses
+  const aps=autoClicksPerSec();
+  if(aps>0){
+    autoVisualAcc+=aps*dt;
+    if(autoVisualAcc>=1){ autoVisualAcc=0;
+      const d=$('#dish'); d.classList.remove('autopulse'); void d.offsetWidth; d.classList.add('autopulse');
+      const r=$('#dishWrap').getBoundingClientRect();
+      floatText('+'+fmt(clickPowerBase()*globalMult()), r.left+rand(60,200), r.top+rand(60,200), 'auto');
+    }
+  }
+  goldenTimer+=dt;
+  const freq=S.prestige.ups.has('lucky')?0.74:1;
+  const stormOn=Date.now()<stormEnd;                 // Worm Storm: rapid spawns
+  const interval=stormOn?0.6:goldenNext*freq;
+  if(goldenTimer>=interval){ goldenTimer=0; if(!stormOn) goldenNext=rand(70,140); spawnGolden(); }
+  requestAnimationFrame(loop);
+}
+setInterval(render, 200);
+
+/* ---------- wiring ---------- */
+buildStore(); buildAchs(); buildEvoUps(); buildTicker();
+load(); render();
+
+$('#dishWrap').addEventListener('click', e=> doClick(e.clientX, e.clientY));
+$('#dishWrap').addEventListener('keydown', e=>{ if(e.key===' '||e.key==='Enter'){ e.preventDefault();
+  const r=$('#dishWrap').getBoundingClientRect(); doClick(r.left+r.width/2, r.top+r.height/2); }});
+$('#saveBtn').addEventListener('click', save);
+$('#exportBtn').addEventListener('click', exportSave);
+$('#importBtn').addEventListener('click', importSave);
+$('#ascendBtn').addEventListener('click', ascend);
+$('#resetBtn').addEventListener('click', ()=>{
+  if(confirm('Bleach the WHOLE plate? This wipes everything including genome levels. Consider Export first!')){
+    try{ localStorage.removeItem(SAVE_KEY); localStorage.removeItem(OLD_KEY); }catch(e){}
+    S=fresh(); buffs=[]; window.__seenBase=0; render(); flash('Plate bleached. Fresh start!');
+  }
+});
+document.querySelectorAll('#buyBar .modebtn[data-m]').forEach(btn=>{
+  btn.addEventListener('click',()=>{ S.buyMode=btn.dataset.m; S.sellMode=false; render(); });
+});
+$('#sellToggle').addEventListener('click',()=>{ S.sellMode=!S.sellMode; render(); });
+
+(function specks(){ const wrap=$('#dishWrap');
+  for(let i=0;i<26;i++){ const s=document.createElement('div'); s.className='speck';
+    s.style.left=rand(20,90)+'%'; s.style.top=rand(20,90)+'%'; wrap.appendChild(s); } })();
+
+setInterval(()=>{ try{ localStorage.setItem(SAVE_KEY, JSON.stringify(serialize()));
+  $('#saveNote').textContent='auto-saved'; setTimeout(()=>$('#saveNote').textContent='',1500);}catch(e){} }, 30000);
+window.addEventListener('beforeunload', ()=>{ try{ localStorage.setItem(SAVE_KEY, JSON.stringify(serialize())); }catch(e){} });
+
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
