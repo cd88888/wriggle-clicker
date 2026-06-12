@@ -274,6 +274,7 @@ const SAVE_VERSION = 3;
 const PRESTIGE_SCALE = 1e6;   // all-time worms per "genome level" follows cube-root of (allTime/scale)
 const LUMP_UNLOCK = 1e6;      // all-time worms to unlock nutrient lumps (CC unlocks sugar lumps at 1e9 baked)
 const LUMP_TIME   = 6*60*1000;// real-time ms to grow one lump (CC ~20h; shortened for a web session). Matures offline too.
+const STARTING_PRESTIGE = 12; // head-start: every game begins at genome level 12 (+12% production, 12 spendable genome points)
 
 /* ---------- number formatting ---------- */
 const UNITS = ['','K','M','B','T','Qa','Qi','Sx','Sp','Oc','No','Dc','UDc','DDc','TDc','QaDc','QiDc','SxDc','SpDc'];
@@ -440,7 +441,7 @@ function fresh(){
     worms:0, allTime:0, clicks:0, hand:0, goldenClicks:0,
     counts:{}, bought:new Set(),
     achs:new Set(),
-    prestige:{ level:0, spent:0, ups:new Set() },
+    prestige:{ level:STARTING_PRESTIGE, spent:0, ups:new Set() },
     lumps:0, lumpStart:0, levels:{},
     buyMode:'1', sellMode:false,
   };
@@ -480,7 +481,7 @@ function applyLoaded(d){
   S.bought=new Set((d.bought||[]).filter(id=>UP[id]));                    // ignore unknown ids
   S.achs=new Set((d.achs||[]).filter(id=>ACHS.some(a=>a.id===id)));
   const p=d.prestige||{};
-  S.prestige={ level:+p.level||0, spent:+p.spent||0, ups:new Set((p.ups||[]).filter(id=>EVO_UPS.some(e=>e.id===id))) };
+  S.prestige={ level:Math.max(STARTING_PRESTIGE, +p.level||0), spent:+p.spent||0, ups:new Set((p.ups||[]).filter(id=>EVO_UPS.some(e=>e.id===id))) };
   S.lumps=+d.lumps||0; S.lumpStart=+d.lumpStart||0;
   S.levels={}; if(d.levels) BUILDINGS.forEach(b=>{ if(d.levels[b.id]) S.levels[b.id]=+d.levels[b.id]; });
   S.buyMode=['1','10','100','max'].includes(d.buyMode)?d.buyMode:'1';
@@ -740,19 +741,34 @@ function flash(msg){ const t=$('#toast'); t.textContent=msg; t.style.opacity='1'
 /* ---------- render ---------- */
 function renderUpgrades(){
   const wrap=$('#upgrades'); wrap.innerHTML='';
-  const visible=ALL_UPGRADES.filter(u=>{
+  // Show the full roadmap: every click/finger/auto/global upgrade is always visible, plus each
+  // building's unlocked tiers AND the immediate next locked tier as a preview. Unaffordable or
+  // not-yet-unlocked ones appear dimmed with a tooltip explaining what's needed — never hidden.
+  const list=ALL_UPGRADES.filter(u=>{
     if(S.bought.has(u.id)) return false;
-    if(u.need && !S.bought.has(u.need)) return false;
-    if(u.kind==='bld') return S.counts[u.target]>=u.req;
-    if(u.kind==='global') return u.req? u.req(S) : true;
-    return true;
-  }).sort((a,b)=>a.cost-b.cost).slice(0,14);
-  visible.forEach(u=>{
+    if(u.kind==='bld'){
+      const owned=S.counts[u.target], idx=+u.id.split('_t')[1];
+      if(owned>=u.req) return true;                          // unlocked tier
+      const prevReq = idx>0 ? TIER_REQ[idx-1] : 0;
+      return owned>=1 && owned>=prevReq;                     // preview only the next locked tier
+    }
+    return true;                                             // click / finger / auto / global: always shown
+  }).sort((a,b)=>a.cost-b.cost);
+  list.forEach(u=>{
+    const reqMet    = !(u.kind==='bld' && S.counts[u.target]<u.req);
+    const needMet   = !(u.need && !S.bought.has(u.need));
+    const gReqMet   = !(u.kind==='global' && u.req && !u.req(S));
+    const afford    = S.worms>=u.cost;
+    const buyable   = reqMet && needMet && gReqMet && afford;
     const el=document.createElement('div');
-    const afford=S.worms>=u.cost;
-    el.className='up u-'+(u.kind)+(afford?'':' locked');
+    el.className='up u-'+u.kind+(buyable?'':' locked');
     el.textContent=u.icon;
-    el.title=`${u.name}\n${u.desc}\nCost: ${fmt(u.cost)} worms`;
+    let extra='';
+    if(!reqMet)        extra=`\n🔒 Unlocks at ${fmtInt(u.req)} ${BLD[u.target].name}`;
+    else if(!needMet)  extra=`\n🔒 Research ${UP[u.need]?UP[u.need].name:u.need} first`;
+    else if(!gReqMet)  extra=`\n🔒 Unlocks with more all-time worms`;
+    else if(!afford)   extra=`\n💰 Saving up… (${fmt(Math.max(0,u.cost-S.worms))} to go)`;
+    el.title=`${u.name}\n${u.desc}\nCost: ${fmt(u.cost)} worms${extra}`;
     el.addEventListener('click',()=>buyUpgrade(u));
     wrap.appendChild(el);
   });
