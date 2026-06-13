@@ -295,16 +295,36 @@ const LUMP_UNLOCK = 1e6;      // all-time worms to unlock nutrient lumps (CC unl
 const LUMP_TIME   = 6*60*1000;// real-time ms to grow one lump (CC ~20h; shortened for a web session). Matures offline too.
 const STARTING_PRESTIGE = 12; // head-start: every game begins at genome level 12 (+12% production, 12 spendable genome points)
 
-/* ---------- number formatting ---------- */
+/* ---------- numeric safety: keep everything finite so we NEVER hit Infinity/NaN ---------- */
+const NUM_CAP   = 1e300;   // hard ceiling for currencies/production (well under Number.MAX_VALUE ≈ 1.8e308)
+const COUNT_CAP = 4000;    // max of any one building — keeps 1.15^count (and prices) finite
+const LEVEL_CAP = 100000;  // max building level / prestige level — keeps multipliers finite
+/* Sanitize a number: NaN/null/-Infinity -> 0, +Infinity / over-cap -> max, else clamp to [0,max]. */
+function num(n, max=NUM_CAP){
+  n = +n;
+  if(!Number.isFinite(n)) return n>0 ? max : 0;   // NaN and -Infinity -> 0, +Infinity -> max
+  if(n<0) return 0;
+  return n>max ? max : n;
+}
+
+/* ---------- number formatting (never renders "NaN" or "Infinity") ---------- */
 const UNITS = ['','K','M','B','T','Qa','Qi','Sx','Sp','Oc','No','Dc','UDc','DDc','TDc','QaDc','QiDc','SxDc','SpDc'];
 function fmt(n){
-  if(!isFinite(n)) return '∞';
+  n = +n;
+  if(Number.isNaN(n)) return '0';
   if(n<0) return '-'+fmt(-n);
+  if(!Number.isFinite(n) || n>=NUM_CAP) return '∞';
   if(n<1000) return (Math.round(n*10)/10).toString().replace(/\.0$/,'');
   let u=0; while(n>=1000 && u<UNITS.length-1){ n/=1000; u++; }
+  if(n>=1000) return n.toExponential(2).replace('e+','e');   // beyond named units -> scientific, still readable
   return n.toFixed(2)+' '+UNITS[u];
 }
-function fmtInt(n){ return n<1000 ? Math.floor(n).toString() : fmt(n); }
+function fmtInt(n){
+  n = +n;
+  if(Number.isNaN(n)) return '0';
+  if(!Number.isFinite(n)) return '∞';
+  return n<1000 ? Math.floor(n).toString() : fmt(n);
+}
 
 /* ---------- BUILDINGS (display order). kind:'cps' = fixed worms/sec; kind:'auto' = clicks/sec ---------- */
 const BUILDINGS = [
@@ -494,15 +514,15 @@ function migrate(d){
 }
 function applyLoaded(d){
   d = migrate(d);
-  S.worms=+d.worms||0; S.allTime=+d.allTime||0; S.clicks=+d.clicks||0;
-  S.hand=+d.hand||0; S.goldenClicks=+d.goldenClicks||0;
-  BUILDINGS.forEach(b=> S.counts[b.id]=(d.counts&&+d.counts[b.id])||0);   // new buildings -> 0
+  // sanitize every loaded number — repairs any save that overflowed to Infinity/NaN before this fix
+  S.worms=num(d.worms); S.allTime=num(d.allTime); S.clicks=num(d.clicks); S.hand=num(d.hand); S.goldenClicks=num(d.goldenClicks);
+  BUILDINGS.forEach(b=> S.counts[b.id]=Math.min(COUNT_CAP, num(d.counts&&d.counts[b.id], COUNT_CAP)));  // new buildings -> 0, capped
   S.bought=new Set((d.bought||[]).filter(id=>UP[id]));                    // ignore unknown ids
   S.achs=new Set((d.achs||[]).filter(id=>ACHS.some(a=>a.id===id)));
   const p=d.prestige||{};
-  S.prestige={ level:Math.max(STARTING_PRESTIGE, +p.level||0), spent:+p.spent||0, ups:new Set((p.ups||[]).filter(id=>EVO_UPS.some(e=>e.id===id))) };
-  S.lumps=+d.lumps||0; S.lumpStart=+d.lumpStart||0;
-  S.levels={}; if(d.levels) BUILDINGS.forEach(b=>{ if(d.levels[b.id]) S.levels[b.id]=+d.levels[b.id]; });
+  S.prestige={ level:Math.min(LEVEL_CAP, Math.max(STARTING_PRESTIGE, num(p.level, LEVEL_CAP))), spent:num(p.spent, LEVEL_CAP), ups:new Set((p.ups||[]).filter(id=>EVO_UPS.some(e=>e.id===id))) };
+  S.lumps=num(d.lumps, 1e9); S.lumpStart=Number.isFinite(+d.lumpStart)?+d.lumpStart:0;
+  S.levels={}; if(d.levels) BUILDINGS.forEach(b=>{ if(d.levels[b.id]) S.levels[b.id]=Math.min(LEVEL_CAP, num(d.levels[b.id], LEVEL_CAP)); });
   S.buyMode=['1','10','100','max'].includes(d.buyMode)?d.buyMode:'1';
   S.sellMode=!!d.sellMode;
   S.autoGolden = d.autoGolden!==false;   // default ON for older saves
@@ -573,35 +593,40 @@ function unitProd(b){
   if(b.kind==='auto') return b.rate * autoMult() * (clickPowerBase()+fingerBonus()) * globalMult() * levelBonus(b.id);
   return b.cps * bldMult(b.id) * globalMult() * levelBonus(b.id);
 }
-function buildingTotal(b){ return S.counts[b.id]*unitProd(b); }
-function rawCps(){ let t=0; BUILDINGS.forEach(b=> t+=buildingTotal(b)); return t; }
-function frenzyMult(){ let m=1; buffs.forEach(x=>{ if(x.kind==='cps') m*=x.mult; }); return m; }
-function clickFrenzyMult(){ let m=1; buffs.forEach(x=>{ if(x.kind==='click') m*=x.mult; }); return m; }
-function liveCps(){ return rawCps()*frenzyMult(); }
-function autoClicksPerSec(){ let t=0; BUILDINGS.forEach(b=>{ if(b.kind==='auto') t+=S.counts[b.id]*b.rate*autoMult(); }); return t; }
-function clickPower(){ return (clickPowerBase()+fingerBonus())*globalMult()*clickFrenzyMult() + liveCps()*0.01; }
+function buildingTotal(b){ return num(S.counts[b.id]*unitProd(b)); }
+function rawCps(){ let t=0; BUILDINGS.forEach(b=> t+=buildingTotal(b)); return num(t); }
+function frenzyMult(){ let m=1; buffs.forEach(x=>{ if(x.kind==='cps') m*=x.mult; }); return num(m,1e12); }
+function clickFrenzyMult(){ let m=1; buffs.forEach(x=>{ if(x.kind==='click') m*=x.mult; }); return num(m,1e12); }
+function liveCps(){ return num(rawCps()*frenzyMult()); }
+function autoClicksPerSec(){ let t=0; BUILDINGS.forEach(b=>{ if(b.kind==='auto') t+=S.counts[b.id]*b.rate*autoMult(); }); return num(t); }
+function clickPower(){ return num((clickPowerBase()+fingerBonus())*globalMult()*clickFrenzyMult() + liveCps()*0.01); }
 
 /* ---------- pricing / bulk buy / sell ---------- */
 const GROW=1.15;
-function priceOne(b){ return Math.ceil(b.base*Math.pow(GROW,S.counts[b.id])); }
+function priceOne(b){ const c=Math.ceil(b.base*Math.pow(GROW,S.counts[b.id])); return Number.isFinite(c)?c:Infinity; }
 function bulkCost(b,n){
   const k=S.counts[b.id];
-  return Math.ceil(b.base*Math.pow(GROW,k)*(Math.pow(GROW,n)-1)/(GROW-1));
+  const c=Math.ceil(b.base*Math.pow(GROW,k)*(Math.pow(GROW,n)-1)/(GROW-1));
+  return Number.isFinite(c)?c:Infinity;
 }
 function maxAffordable(b){
   const k=S.counts[b.id];
-  const v = Math.floor( Math.log((S.worms*(GROW-1))/(b.base*Math.pow(GROW,k))+1)/Math.log(GROW) );
-  return Math.max(0, v);
+  if(k>=COUNT_CAP) return 0;
+  const denom=b.base*Math.pow(GROW,k);
+  if(!Number.isFinite(denom) || denom<=0) return 0;
+  const v=Math.floor( Math.log((num(S.worms)*(GROW-1))/denom+1)/Math.log(GROW) );
+  return Math.max(0, Math.min(COUNT_CAP-k, Number.isFinite(v)?v:0));   // never exceed the building cap
 }
 function sellRefund(b,n){
   const k=S.counts[b.id]; n=Math.min(n,k);
   // 25% refund of the price each of the top n units cost
   const gross=b.base*(Math.pow(GROW,k)-Math.pow(GROW,k-n))/(GROW-1);
-  return Math.floor(gross*0.25);
+  return num(Math.floor(gross*0.25));
 }
 function curQty(b){
   if(S.sellMode){ return S.buyMode==='max' ? S.counts[b.id] : Math.min(parseInt(S.buyMode), S.counts[b.id]); }
-  return S.buyMode==='max' ? Math.max(1,maxAffordable(b)) : parseInt(S.buyMode);
+  const room=Math.max(0, COUNT_CAP - S.counts[b.id]);
+  return S.buyMode==='max' ? Math.max(1, maxAffordable(b)) : Math.min(parseInt(S.buyMode), room);
 }
 
 /* ---------- buffs ---------- */
@@ -614,15 +639,15 @@ function tickLumps(){
   if(!lumpsUnlocked()) return;
   if(!S.lumpStart) S.lumpStart=Date.now();
   const matured=Math.floor((Date.now()-S.lumpStart)/LUMP_TIME);
-  if(matured>0){ S.lumps+=matured; S.lumpStart+=matured*LUMP_TIME; }   // accrues offline too (lumpStart persists)
+  if(matured>0){ S.lumps=num(S.lumps+matured, 1e9); S.lumpStart+=matured*LUMP_TIME; }   // accrues offline too (lumpStart persists)
 }
-function lumpProgress(){ return (!lumpsUnlocked()||!S.lumpStart) ? 0 : Math.min(1,(Date.now()-S.lumpStart)/LUMP_TIME); }
-function lumpETA(){ return (!lumpsUnlocked()||!S.lumpStart) ? 0 : Math.max(0, LUMP_TIME-(Date.now()-S.lumpStart)); }
+function lumpProgress(){ return (!lumpsUnlocked()||!S.lumpStart) ? 0 : Math.min(1,Math.max(0,(Date.now()-S.lumpStart)/LUMP_TIME)); }
+function lumpETA(){ return (!lumpsUnlocked()||!S.lumpStart) ? 0 : Math.min(LUMP_TIME, Math.max(0, LUMP_TIME-(Date.now()-S.lumpStart))); }
 function levelCost(id){ return bldLevel(id)+1; }   // L -> L+1 costs L+1 lumps (Cookie Clicker rule)
 function levelUp(b){
   const cost=levelCost(b.id);
   if(S.lumps<cost){ flash(`Need ${cost} nutrient lump${cost>1?'s':''} to level ${b.name}`); return; }
-  S.lumps-=cost; S.levels[b.id]=bldLevel(b.id)+1;
+  S.lumps=Math.max(0,S.lumps-cost); S.levels[b.id]=Math.min(LEVEL_CAP, bldLevel(b.id)+1);
   flash(`${b.name} → level ${S.levels[b.id]} (+1% output)`); render();
 }
 
@@ -670,13 +695,13 @@ function buildTicker(){
 /* ---------- actions ---------- */
 function clickBuilding(b){
   const qty=curQty(b);
+  if(!Number.isFinite(qty) || qty<=0) return;
   if(S.sellMode){
-    if(qty<=0) return;
-    S.worms+=sellRefund(b,qty); S.counts[b.id]-=qty; render(); return;
+    S.worms=num(S.worms+sellRefund(b,qty)); S.counts[b.id]=Math.max(0, S.counts[b.id]-qty); render(); return;
   }
   const cost=bulkCost(b,qty);
-  if(S.worms<cost || qty<=0) return;
-  S.worms-=cost; S.counts[b.id]+=qty; render();
+  if(!Number.isFinite(cost) || S.worms<cost) return;
+  S.worms=num(S.worms-cost); S.counts[b.id]=Math.min(COUNT_CAP, S.counts[b.id]+qty); render();
 }
 function buyUpgrade(u){
   if(S.bought.has(u.id) || S.worms<u.cost) return;
@@ -685,7 +710,7 @@ function buyUpgrade(u){
   if(u.kind==='global' && u.req && !u.req(S)) return;
   S.worms-=u.cost; S.bought.add(u.id); flash('Researched: '+u.name); render();
 }
-function prestigeFromAllTime(){ return Math.floor(Math.cbrt(S.allTime/PRESTIGE_SCALE)); }
+function prestigeFromAllTime(){ return Math.min(LEVEL_CAP, Math.floor(Math.cbrt(num(S.allTime)/PRESTIGE_SCALE))); }
 function ascend(){
   const target=prestigeFromAllTime(), gain=target-S.prestige.level;
   if(gain<=0){ flash('Not enough all-time worms to gain a genome point yet.'); return; }
@@ -706,7 +731,7 @@ function buyEvo(e){
 
 /* ---------- click feedback ---------- */
 function doClick(x,y){
-  const g=clickPower(); S.worms+=g; S.allTime+=g; S.clicks++; S.hand+=g;
+  const g=clickPower(); S.worms=num(S.worms+g); S.allTime=num(S.allTime+g); S.clicks++; S.hand=num(S.hand+g);
   floatText('+'+fmt(g), x, y);
 }
 function floatText(txt,x,y,cls){
@@ -719,19 +744,22 @@ function floatText(txt,x,y,cls){
 /* ---------- golden worm ---------- */
 let goldenTimer=0, goldenNext=rand(70,140), stormEnd=0;
 function rand(a,b){ return a+Math.random()*(b-a); }
+// Add a buff, REFRESHING any existing buff of the same name instead of stacking it.
+// (Stacking identical frenzies multiplicatively was what blew production past Infinity.)
+function pushBuff(buff){ buffs=buffs.filter(b=>b.name!==buff.name); buffs.push(buff); }
 // Every golden worm grants a PRODUCTION-boost buff (no Lucky/Click-Frenzy/Clot).
 function grantGoldenBuff(){
   S.goldenClicks++;
   const roll=Math.random();
   if(roll<0.62){
-    buffs.push({name:'Wriggle Frenzy ×7', kind:'cps', mult:7, until:Date.now()+buffDur(77000)});
+    pushBuff({name:'Wriggle Frenzy ×7', kind:'cps', mult:7, until:Date.now()+buffDur(77000)});
     flash('🔥 Wriggle Frenzy! ×7 production for 77s');
   }else if(roll<0.90){
-    buffs.push({name:'Wriggle Bloom ×15', kind:'cps', mult:15, until:Date.now()+buffDur(60000)});
+    pushBuff({name:'Wriggle Bloom ×15', kind:'cps', mult:15, until:Date.now()+buffDur(60000)});
     flash('🌟 Wriggle Bloom! ×15 production for 60s');
   }else{
     // Worm Storm: ×7 plus a flurry of rapidly-spawning golden worms — each also a production boost
-    buffs.push({name:'Worm Storm ×7', kind:'cps', mult:7, until:Date.now()+buffDur(7000)});
+    pushBuff({name:'Worm Storm ×7', kind:'cps', mult:7, until:Date.now()+buffDur(7000)});
     stormEnd=Date.now()+buffDur(7000);
     flash('🌪️ Worm Storm! a flurry of golden worms!');
   }
@@ -824,7 +852,8 @@ function renderStore(){
       el.querySelector('.rate').textContent=`+${fmt(each)}/s each`;
     }
     const contrib=buildingTotal(b);
-    const pct = total>0 ? (contrib/total*100) : 0;
+    let pct = (total>0 && Number.isFinite(contrib)) ? (contrib/total*100) : 0;
+    if(!Number.isFinite(pct)) pct=0;
     el.querySelector('.contrib').textContent = owned>0
       ? `colony output: ${fmt(contrib)}/s · ${pct.toFixed(1)}% of total`
       : `not yet in your colony`;
@@ -920,7 +949,7 @@ function accrue(){
   const realSec=(now-lastReal)/1000; lastReal=now;
   if(realSec<=0) return;
   const warpSec=realSec*gameSpeed;
-  const gain=liveCps()*warpSec; S.worms+=gain; S.allTime+=gain;
+  const gain=liveCps()*warpSec; S.worms=num(S.worms+gain); S.allTime=num(S.allTime+gain);
   if(S.lumpStart) S.lumpStart-=(warpSec-realSec)*1000;   // warp the nutrient-lump clock to match
   tickLumps();
   // golden-worm scheduling — advances on warped real time, so it fires on OR off screen
